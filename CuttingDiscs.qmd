@@ -1,0 +1,320 @@
+---
+title: "Investigation of cutting discs via ANOVA"
+---
+
+# Intro
+
+Hot rolled steel bars have to cutted in certain customer needed lenght. Different cutting disc types can be applied for this process. We are going to try - by means of ANOVA - to figure out, which of three selected cutting discs have the best efficiency / lifetime.
+
+The effect of following parameters (x-values) will be investigate on the efficiency (y-value) of cutting discs:
+
+-    Disc type
+
+-   Steel bar temperature
+
+-   Circumferential speed of cutting machine
+
+-   Feed speed of cutting machine
+
+-   Carbon content of the steel bars
+
+-   Area of the steel bars
+
+-   Diameter of the steel bars
+
+# Get / Visualize Data
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+#| label: fig-EfficiencyDiscType
+#| fig-cap: Efficiency of disc types
+#| fig-align: "center"
+#| fig-pos: "H"
+#| fig-width: 10
+#| fig-height: 8
+
+# load packages
+options(contrasts = c("contr.sum", "contr.poly"))
+library(tidyverse)
+library(scales)
+library(reshape2)
+library(car)
+library(doParallel)
+library(foreach)
+
+# Load data set
+data.cut <- readRDS("data.cut.rds") # NOT AVAILABLE on my page!!!!
+
+# Plot data to see what kind of data we have
+data.cut %>% 
+  ggplot(aes(disc.type, efficiency, fill = disc.type)) + 
+  geom_boxplot(outliers = F)  +
+  theme_bw(base_size = 25) + 
+  xlab("Disc type") +
+  scale_y_continuous("Efficiency", breaks = pretty_breaks(n = 10)) + 
+  stat_summary(fun.y = mean, geom = "point", shape = 20, size = 5, color = "blue", position = position_dodge(0.75), show.legend = F) +
+  theme(
+    legend.position = "none"
+  )
+```
+
+# Confidence interval
+
+In @fig-Confidence you can see the mean values of efficiency and the corresponding confidence intervalls (95%) for the three disc types. There are no overlaps between the the confidence intervals of disc types; it seems that the disc types differs each other in efficiency. We will proof that later via ANOVA!
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+#| label: fig-Confidence
+#| fig-cap: Confidence interval (95%) of efficiency for different disc types
+#| fig-align: "center"
+#| fig-pos: "H"
+#| fig-width: 10
+#| fig-height: 8
+
+# Calculate confidence interval
+library(Rmisc)
+data.cut.confidence <- 
+  data.cut %>%
+  group_by(disc.type) %>%
+  dplyr::summarise(avg_efficiency = mean(efficiency), 
+                   uci_efficiency = CI(efficiency)[1], 
+                   lci_efficiency = CI(efficiency)[3]) 
+
+# Plot confidence interval
+ggplot(data = data.cut.confidence, aes(x = disc.type, y = avg_efficiency, color = disc.type)) +
+  geom_point(size = 7) +
+  geom_errorbar(aes(ymin=uci_efficiency, ymax=lci_efficiency), size = 1, width=.2, position=position_dodge(0.05)) +
+  xlab("Disc type") + ylab("Efficiency") +
+  scale_y_continuous(breaks = pretty_breaks(n = 10)) +
+  theme_bw(base_size = 30) + 
+  theme(
+    legend.position = "none"
+    )
+```
+
+# Convert continuous data to categorical data
+
+ANOVA needs continuous dependent variable and categorical independent variables. We will divide all (continuous) independent variables into four categories (quartile).
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+
+# Calculate quartile for bar area 
+q.bar.area <- quantile(data.cut$area)
+# Create new column for the different (four) categories of bar area 
+data.cut$area.factor <- cut(data.cut$area, c(-Inf, 1982.594, 4190.840, 8557.842, Inf),
+                           labels = c("1.Quartil", "2.Quartil", "3.Quartil", "4.Quartil"),
+                           right = F, ordered_result = T)
+
+# Calculate quartile for bar temperatur 
+q.temp <- quantile(data.cut$temperature) 
+# Create new column for the different (four) categories of bar temperature
+data.cut$temp.factor <- cut(data.cut$temperature, c(-Inf, 233.0, 314.0, 368.0, Inf),
+                          labels = c("1.Quartil", "2.Quartil", "3.Quartil", "4.Quartil"),
+                          right = F, ordered_result = T)
+# Calculate quartile for bar diameter
+q.diameter.factor <- quantile(data.cut$diameter)
+# Create new column for the different (four) categories of bar diameter
+data.cut$diameter.factor <- cut(data.cut$diameter, c(-Inf, 60, 80, 95, Inf),
+                         labels = c("1.Quartil", "2.Quartil", "3.Quartil", "4.Quartil"),
+                         right = F, ordered_result = T)
+
+# Calculate quartile for circumferential speed of cutting machine 
+q.circum.factor <- quantile(data.cut$circumferential.speed)
+# Create new column for the different (four) categories of circumferential speed
+data.cut$circum.factor <- cut(data.cut$circumferential.speed, c(-Inf, 90, 96, 98, Inf),
+                            labels = c("1.Quartil", "2.Quartil", "3.Quartil", "4.Quartil"),
+                            right = F, ordered_result = T)
+
+# Calculate quartile for feed speed of cutting machine 
+q.feed.factor <- quantile(data.cut$feed.speed)
+# Create new column for the different (four) categories of feed speed
+data.cut$feed.factor <- cut(data.cut$feed.speed, c(-Inf, 13, 14, 15, Inf),
+                              labels = c("1.Quartil", "2.Quartil", "3.Quartil", "4.Quartil"),
+                              right = F, ordered_result = T)
+
+# Calculate quartile for carbon content of steel bars  
+q.carb.factor <- quantile(data.cut$carbon)
+# Create new column for the different (four) categories of carbon content of steel bars
+data.cut$carb.factor <- cut(data.cut$carbon, c(-Inf, 0.186, 0.365, 0.483, Inf),
+                          labels = c("1.Quartil", "2.Quartil", "3.Quartil", "4.Quartil"),
+                          right = F, ordered_result = T)
+```
+
+# Levene-Test
+
+Perform a levene test to proof the homogeneity of the variances - in the population - between the three groups (cutting-discs).
+
+The homogeneity of the variances are a necessary condition to perform ANOVA. According to the levene test (p \< 0.05) the variances in the population are not equal (homogeneous)! ; therefore the essential requirement to do ANOVA are not fulfilled. In this case there are alternatives like Welch-Test for one way (factor) ANOVA, but for multi-factor ANOVA there not alternatives.
+
+Nevertheless, ANOVA is an robust method to detect significant differences in mean-values between groups (factors), if the sample size in groups are the same respectively the sample size is bigger than 10 per group; even though the variances of population are not equal.
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+
+# Perform levene test
+# system.time({
+#   registerDoParallel(cores = (detectCores() - 1))
+#   getDoParWorkers()
+#   getDoParName()
+# data.levene <- leveneTest(efficiency ~ disc.type * area.factor * temp.factor * diameter.factor *
+#                             circum.factor * feed.factor * carb.factor, data.cut)
+#   registerDoSEQ()
+# })
+
+# Or read the results of leve test
+data.levene <- readRDS("data.levene.rds")
+
+# show results of levene test
+# data.levene
+# p < 0.05 --> Variances are not homogen! 
+```
+
+# ANOVA
+
+According to the ANOVA there are significant differences between the mean efficiency of the cutting discs. It looks like, that the three cutting discs distinguish each other in efficiency.
+
+By means of post-hoc-test we can figure out, which cutting discs distinguish each other.
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+
+# Perform ANOVA
+# system.time({
+#   registerDoParallel(cores = (detectCores() - 1))
+#   getDoParWorkers()
+#   getDoParName()
+#   data.anova.res <- aov(efficiency ~ disc.type * area.factor * temp.factor * diameter.factor *
+#                           circum.factor * feed.factor * carb.factor, data.cut)
+#   registerDoSEQ()
+# })
+
+# Or read the results of ANOVA
+data.anova.res <- readRDS("data.anova.res.rds")
+
+# summary of ANOVA
+anova.res.summary <- summary(data.anova.res)
+
+# show ANOVA results
+# anova.res.summary
+
+# save ANOVA results to avoid long recalculation times
+# saveRDS(data.anova.res, "data.anova.res.rds")
+```
+
+# Post HOC Test
+
+Because the groups have not the same variance in the population (due to levene-test), we are going to apply games-howell post-hoc test. According to the games-howell-test the efficiency of the cutting discs distinguish each other significantly!
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+
+# load needed library for the post-hoc test
+library(rstatix, warn.conflicts = F)
+
+# Perform post-hoc test
+# data.post.hoc <- games_howell_test(data.cut, efficiency ~ disc.type)
+
+# Or read the results of post-hoc test
+data.post.hoc <- readRDS("post.hoc.rds")
+```
+
+## Visualize post-hoc results
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+#| label: fig-PostHoc
+#| fig-cap: Post-Hoc results
+#| fig-align: "center"
+#| fig-pos: "H"
+#| fig-width: 10
+#| fig-height: 8
+
+# Define mean, min, max and p for the plot
+colnames(data.post.hoc)[4:7]<-c("mean",
+                      "min",
+                      "max",
+                      "p")
+
+
+# Create data frame for graphical depiction
+data.post.hoc <- data.frame(id = c("A - B", "A - C", "B - C"),
+                mean = data.post.hoc$mean,
+                min = data.post.hoc$min,
+                max = data.post.hoc$max,
+                idt = ifelse(data.post.hoc$p < 0.05,
+                           "significant",
+                           "not significant")
+                )
+
+# Plot post-hoc results - if significant red, otherwise green color
+ggplot(data.post.hoc, aes(id, color = idt)) +
+  geom_point(aes(x = id, y = mean), size = 4, show.legend = F) +
+  scale_y_continuous(breaks = pretty_breaks(n = 10)) +
+  geom_errorbar(aes(ymin = min,
+                    ymax = max),
+                width = 0.5,
+                size = 1.25) +
+  ylab("Delta efficiency [-]") +
+  labs(x = NULL, color = NULL) +
+  scale_color_manual(values = c("red","green")) +
+  coord_flip() +
+  theme_bw(base_size = 25) +
+  theme(
+    legend.title = element_blank(),
+    legend.position = c(.95, 0.95),
+    legend.justification = c("right", "top"),
+    legend.box.just = "right",
+    legend.margin = margin(3, 3, 3, 3)
+    )
+```
+
+# Eta-squared (effect size)
+
+Due to eta-squared the area of cutted bars has the biggest influence on the efficiency / lifetime of cutting discs! But the disc type and circumferential speed of the cutting machine has also an - albeit a small - effect on efficiency / lifetime.
+
+```{r}
+#| warning: FALSE
+#| echo: False
+#| message: False
+#| label: fig-EtaSquared
+#| fig-cap: Eta squared
+#| fig-align: "center"
+#| fig-pos: "H"
+#| fig-width: 10
+#| fig-height: 8
+
+# Calculate eta squered and make data frame
+eta.effect <- 
+  eta_squared(data.anova.res) %>%   # Need library(rstatix)
+  data.frame() 
+
+# Change the colname "." to "eta squared"
+colnames(eta.effect) <- c("eta squared")
+#  mutate("eta squared" = ".")
+
+eta.effect <- 
+  eta.effect %>%
+  rownames_to_column(var = "process parameters [-]") 
+  
+eta.effect %>% filter(`eta squared` > 0.02) %>%
+  ggplot(aes(x = `process parameters [-]`, y = `eta squared`, color = `process parameters [-]`)) + geom_point(size = 10) + xlab("") + 
+  ylab("Eta squared [-]") + scale_color_manual(values = c("red", "green", "blue")) + scale_y_continuous(breaks=pretty_breaks(n=10)) +
+  theme_bw(base_size = 25) + theme(
+    legend.position = "none"
+  )
+```
